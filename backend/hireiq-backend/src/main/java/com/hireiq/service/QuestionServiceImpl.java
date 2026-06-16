@@ -6,6 +6,7 @@ import com.hireiq.dto.QuestionResponse;
 import com.hireiq.entity.Assessment;
 import com.hireiq.entity.Question;
 import com.hireiq.entity.QuestionOption;
+import com.hireiq.entity.Role;
 import com.hireiq.entity.User;
 import com.hireiq.repository.AssessmentRepository;
 import com.hireiq.repository.QuestionRepository;
@@ -115,7 +116,7 @@ public class QuestionServiceImpl implements QuestionService {
     }
 
     private void checkAuthorization(Assessment assessment, User currentUser) {
-        boolean isAdmin = currentUser.getRole().name().equals("ADMIN");
+        boolean isAdmin = currentUser.getRole() == Role.ADMIN;
         boolean isCreator = assessment.getCreatedBy().getId().equals(currentUser.getId());
 
         if (!isAdmin && !isCreator) {

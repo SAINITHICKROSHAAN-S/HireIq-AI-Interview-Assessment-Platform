@@ -3,6 +3,7 @@ package com.hireiq.service;
 import com.hireiq.dto.AssessmentRequest;
 import com.hireiq.dto.AssessmentResponse;
 import com.hireiq.entity.Assessment;
+import com.hireiq.entity.Role;
 import com.hireiq.entity.User;
 import com.hireiq.repository.AssessmentRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +23,7 @@ public class AssessmentServiceImpl implements AssessmentService {
     @Transactional
     public AssessmentResponse createAssessment(AssessmentRequest request, User currentUser) {
         // Enforce that Candidates cannot create assessments
-        if (currentUser.getRole().name().equals("CANDIDATE")) {
+        if (currentUser.getRole() == Role.CANDIDATE) {
             throw new SecurityException("Candidates are not authorized to create assessments");
         }
 
@@ -85,7 +86,7 @@ public class AssessmentServiceImpl implements AssessmentService {
     }
 
     private void checkAuthorization(Assessment assessment, User currentUser) {
-        boolean isAdmin = currentUser.getRole().name().equals("ADMIN");
+        boolean isAdmin = currentUser.getRole() == Role.ADMIN;
         boolean isCreator = assessment.getCreatedBy().getId().equals(currentUser.getId());
         
         if (!isAdmin && !isCreator) {
