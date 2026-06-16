@@ -26,7 +26,7 @@ public class QuestionController {
             @Valid @RequestBody QuestionRequest request,
             @AuthenticationPrincipal User currentUser
     ) {
-        System.out.println("CURRENT USER = " + currentUser);
+        
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(questionService.addQuestion(assessmentId, request, currentUser));
     }

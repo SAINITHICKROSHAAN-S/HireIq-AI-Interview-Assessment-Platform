@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --color-brand-50: #f0f7ff;
+  --color-brand-100: #e0effe;
+  --color-brand-200: #bae0fd;
+  --color-brand-300: #7cc7fb;
+  --color-brand-400: #38a9f8;
+  --color-brand-500: #0e8ee9;
+  --color-brand-600: #0270c9;
+  --color-brand-700: #0259a3;
+  --color-brand-800: #064c86;
+  --color-brand-900: #0b4070;
+  --color-brand-950: #07294a;
+  
+  --color-dark-bg: #030303;
+  --color-dark-panel: #0a0a0a;
+  --color-dark-border: #1a1a1a;
+  --color-dark-hover: #161616;
+  --color-dark-text: #ededed;
+  --color-dark-muted: #888888;
+}
+
+:root {
+  font-family: var(--font-sans);
+}
+
+/* Base resets & scrollbar overrides */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #030303;
+  color: #ededed;
+  overflow-x: hidden;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+/* Custom scrollbars for a premium feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Light Theme Variables */
+html.light {
+  color-scheme: light;
+}
+html.light, html.light body, html.light #root {
+  background-color: #fcfcfc;
+  color: #171717;
+}
+
+/* Dark mode grid background for a premium feel */
+.dark-grid-bg {
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+html.light .dark-grid-bg {
+  background-image: 
+    linear-gradient(to right, rgba(0, 0, 0, 0.015) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.015) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Subtle glowing accent background */
+.accent-glow {
+  position: absolute;
+  width: 600px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(14, 142, 233, 0.08) 0%, rgba(14, 142, 233, 0) 70%);
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+}
