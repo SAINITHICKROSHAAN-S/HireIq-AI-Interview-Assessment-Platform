@@ -10,4 +10,6 @@ import java.util.List;
 public interface AssessmentRepository extends JpaRepository<Assessment, Long> {
     
     List<Assessment> findByCreatedBy(User createdBy);
+
+    Long countByCreatedById(Long userId);
 }
