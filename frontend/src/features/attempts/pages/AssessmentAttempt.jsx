@@ -1,129 +1,233 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  Clock, 
-  ChevronLeft, 
-  ChevronRight, 
+import { useQuery } from '@tanstack/react-query';
+import {
+  Clock,
+  ChevronLeft,
+  ChevronRight,
   CheckCircle,
-  HelpCircle,
   AlertCircle,
-  Play
+  Loader2,
+  Send,
+  X,
+  BookOpen,
+  Hash
 } from 'lucide-react';
+import { getQuestionsByAssessment } from '../../questions/api/questionsApi';
+import { getAssessmentById } from '../../assessments/api/assessmentsApi';
+import {
+  useSubmitAnswerMutation,
+  useSubmitAttemptMutation
+} from '../hooks/useAttempts';
 
 const AssessmentAttempt = () => {
   const { attemptId } = useParams();
   const navigate = useNavigate();
 
-  // Test state parameters
+  // Retrieve stored assessmentId for this attempt
+  const assessmentId = localStorage.getItem(`attempt_${attemptId}_assessment`);
+
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [selectedAnswers, setSelectedAnswers] = useState({});
-  const [timeLeft, setTimeLeft] = useState(1800); // 30 minutes in seconds
+  const [selectedAnswers, setSelectedAnswers] = useState({}); // questionId -> optionId
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [isSubmitOpen, setIsSubmitOpen] = useState(false);
+  const [savingQuestionId, setSavingQuestionId] = useState(null); // tracks which question is auto-saving
+  const hasAutoSubmitted = useRef(false);
 
-  // Mock assessment details with questions matching the Question entity schema
-  const assessment = {
-    id: 1,
-    title: 'Senior React Developer Assessment',
-    questions: [
-      {
-        id: 201,
-        questionText: 'What is the primary benefit of Reacts Virtual DOM?',
-        options: [
-          { id: 1, optionText: 'It writes directly to the browser DOM synchronously', isCorrect: false },
-          { id: 2, optionText: 'It minimizes layout reflows and batches document updates', isCorrect: true },
-          { id: 3, optionText: 'It requires double the memory of the default window object', isCorrect: false },
-          { id: 4, optionText: 'It handles style sheet parsing in Node server environments', isCorrect: false },
-        ]
-      },
-      {
-        id: 202,
-        questionText: 'When would you use the callback reference function inside the ref property in React?',
-        options: [
-          { id: 5, optionText: 'To fetch initial server states inside server components', isCorrect: false },
-          { id: 6, optionText: 'To run code when the reference node is set, mounted, or unmounted', isCorrect: true },
-          { id: 7, optionText: 'To declare a hook conditionally inside loops', isCorrect: false },
-          { id: 8, optionText: 'To trigger re-renders when the state property value changes', isCorrect: false },
-        ]
-      },
-      {
-        id: 203,
-        questionText: 'What does React.useMemo hook memoize?',
-        options: [
-          { id: 9, optionText: 'The rendered JSX node tree elements', isCorrect: false },
-          { id: 10, optionText: 'The computation return value across component updates', isCorrect: true },
-          { id: 11, optionText: 'The state handler functions directly', isCorrect: false },
-        ]
-      }
-    ]
-  };
+  // Fetch assessment details (to get duration for timer)
+  const { data: assessment, isLoading: isAssessmentLoading } = useQuery({
+    queryKey: ['assessment', assessmentId],
+    queryFn: () => getAssessmentById(assessmentId),
+    enabled: !!assessmentId,
+    staleTime: Infinity
+  });
 
-  // Timer loop
+  // Fetch questions for this assessment
+  const { data: questions = [], isLoading: isQuestionsLoading, error: questionsError } = useQuery({
+    queryKey: ['questions', assessmentId],
+    queryFn: () => getQuestionsByAssessment(assessmentId),
+    enabled: !!assessmentId,
+    staleTime: Infinity
+  });
+
+  // Mutations
+  const submitAnswerMutation = useSubmitAnswerMutation();
+  const submitAttemptMutation = useSubmitAttemptMutation();
+
+  // Initialize timer once assessment duration is loaded
   useEffect(() => {
+    if (assessment?.duration && timeLeft === null) {
+      setTimeLeft(assessment.duration * 60);
+    }
+  }, [assessment, timeLeft]);
+
+  // Submit attempt helper
+  const handleAutoSubmit = useCallback(async () => {
+    if (hasAutoSubmitted.current) return;
+    hasAutoSubmitted.current = true;
+    try {
+      await submitAttemptMutation.mutateAsync(parseInt(attemptId));
+      navigate(`/candidate/results/${attemptId}`);
+    } catch (err) {
+      console.error('Auto-submit failed:', err);
+      navigate(`/candidate/results/${attemptId}`);
+    }
+  }, [attemptId, navigate, submitAttemptMutation]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (timeLeft === null) return;
     if (timeLeft <= 0) {
-      handleSubmit();
+      handleAutoSubmit();
       return;
     }
     const timer = setInterval(() => {
-      setTimeLeft(prev => prev - 1);
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(timer);
-  }, [timeLeft]);
+  }, [timeLeft, handleAutoSubmit]);
 
-  // Format helper for timer mm:ss
+  // Format mm:ss
   const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    if (seconds === null) return '--:--';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
-  const handleSelectOption = (questionId, optionId) => {
-    setSelectedAnswers(prev => ({
-      ...prev,
-      [questionId]: optionId
-    }));
+  // Auto-save answer on selection
+  const handleSelectOption = async (questionId, optionId) => {
+    setSelectedAnswers(prev => ({ ...prev, [questionId]: optionId }));
+    setSavingQuestionId(questionId);
+    try {
+      await submitAnswerMutation.mutateAsync({
+        attemptId: parseInt(attemptId),
+        questionId,
+        selectedOptionId: optionId
+      });
+    } catch (err) {
+      console.error('Failed to auto-save answer:', err);
+    } finally {
+      setSavingQuestionId(null);
+    }
   };
 
   const handleNext = () => {
-    if (currentIdx < assessment.questions.length - 1) {
-      setCurrentIdx(prev => prev + 1);
-    }
+    if (currentIdx < questions.length - 1) setCurrentIdx(prev => prev + 1);
   };
 
   const handlePrev = () => {
-    if (currentIdx > 0) {
-      setCurrentIdx(prev => prev - 1);
+    if (currentIdx > 0) setCurrentIdx(prev => prev - 1);
+  };
+
+  const handleConfirmSubmit = async () => {
+    try {
+      await submitAttemptMutation.mutateAsync(parseInt(attemptId));
+      navigate(`/candidate/results/${attemptId}`);
+    } catch (err) {
+      const errorMsg = err.response?.data || err.message || 'Failed to submit assessment.';
+      alert(errorMsg);
     }
   };
 
-  const handleSubmit = () => {
-    alert('Assessment submitted successfully!');
-    // Redirect to results placeholder
-    navigate(`/candidate/results/${attemptId || 1}`);
-  };
-
-  const currentQuestion = assessment.questions[currentIdx];
   const answeredCount = Object.keys(selectedAnswers).length;
+  const currentQuestion = questions[currentIdx];
+  const isLoading = isAssessmentLoading || isQuestionsLoading;
+  const timerDanger = timeLeft !== null && timeLeft <= 300; // last 5 mins
+
+  // No assessmentId in storage - show error
+  if (!assessmentId) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+        <AlertCircle size={48} className="text-red-400" />
+        <h2 className="text-xl font-bold text-white">Assessment Not Found</h2>
+        <p className="text-sm text-zinc-400 max-w-sm">
+          Unable to find the assessment data for this attempt. Please start a new attempt from the dashboard.
+        </p>
+        <a href="/candidate/dashboard" className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">
+          Back to Dashboard
+        </a>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        {/* Top Bar Skeleton */}
+        <div className="h-20 bg-zinc-900/50 rounded-2xl border border-zinc-900" />
+        <div className="grid gap-6 md:grid-cols-4">
+          <div className="h-64 bg-zinc-900/50 rounded-2xl border border-zinc-900" />
+          <div className="md:col-span-3 h-96 bg-zinc-900/50 rounded-2xl border border-zinc-900" />
+        </div>
+      </div>
+    );
+  }
+
+  if (questionsError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+        <AlertCircle size={48} className="text-red-400" />
+        <h2 className="text-xl font-bold text-white">Failed to Load Questions</h2>
+        <p className="text-sm text-zinc-400">{questionsError.message}</p>
+      </div>
+    );
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+        <BookOpen size={48} className="text-zinc-600" />
+        <h2 className="text-xl font-bold text-white">No Questions Found</h2>
+        <p className="text-sm text-zinc-400 max-w-sm">
+          This assessment has no questions configured yet. Please contact your recruiter.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-[calc(100vh-8rem)] flex flex-col justify-between animate-in fade-in duration-300">
-      
+    <div className="min-h-[calc(100vh-8rem)] flex flex-col space-y-6 animate-in fade-in duration-300">
+
       {/* Top Console Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between border border-zinc-900 light:border-zinc-200 bg-[#0a0a0a]/80 light:bg-white/80 p-5 rounded-2xl backdrop-blur-sm mb-6 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border border-zinc-900 light:border-zinc-200 bg-[#080808]/90 light:bg-white/90 p-5 rounded-2xl backdrop-blur-sm gap-4">
         <div>
-          <h3 className="text-base font-bold text-white light:text-black">{assessment.title}</h3>
-          <p className="text-xs text-zinc-500 light:text-zinc-400">Answer all questions to submit score. Do not reload page.</p>
+          <h3 className="text-base font-bold text-white light:text-zinc-900">
+            {assessment?.title || 'Assessment Exam Console'}
+          </h3>
+          <p className="text-[11px] text-zinc-500 light:text-zinc-400 mt-0.5">
+            {answeredCount} of {questions.length} answered — do not reload the page during the exam.
+          </p>
         </div>
 
-        <div className="flex items-center space-x-6">
-          <div className="flex items-center space-x-2 bg-zinc-950 light:bg-zinc-100 border border-zinc-900 light:border-zinc-200 px-4 py-2 rounded-xl text-zinc-300 light:text-zinc-700">
-            <Clock size={16} className="text-amber-500" />
-            <span className="text-sm font-mono font-bold">{formatTime(timeLeft)}</span>
+        <div className="flex items-center space-x-4">
+          {/* Timer */}
+          <div className={`flex items-center space-x-2 px-4 py-2 rounded-xl border font-mono font-bold text-sm transition ${
+            timerDanger
+              ? 'bg-red-950/40 border-red-900 text-red-400 animate-pulse'
+              : 'bg-zinc-950 light:bg-zinc-100 border-zinc-900 light:border-zinc-200 text-zinc-300 light:text-zinc-700'
+          }`}>
+            <Clock size={15} className={timerDanger ? 'text-red-400' : 'text-amber-500'} />
+            <span>{formatTime(timeLeft)}</span>
           </div>
-          
+
+          {/* Finish Test */}
           <button
-            onClick={handleSubmit}
-            className="flex items-center space-x-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-500/10 transition cursor-pointer"
+            onClick={() => setIsSubmitOpen(true)}
+            disabled={submitAttemptMutation.isPending}
+            className="flex items-center space-x-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/10 transition disabled:opacity-50 cursor-pointer"
           >
-            <CheckCircle size={16} />
+            {submitAttemptMutation.isPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Send size={14} />
+            )}
             <span>Finish Test</span>
           </button>
         </div>
@@ -131,28 +235,56 @@ const AssessmentAttempt = () => {
 
       {/* Main Console Board */}
       <div className="grid gap-6 md:grid-cols-4 flex-1">
-        
-        {/* Left Side: Navigation Map */}
-        <div className="border border-zinc-900 light:border-zinc-200 bg-[#0a0a0a]/60 light:bg-white/60 p-5 rounded-2xl backdrop-blur-sm h-fit space-y-4">
-          <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-            Test Navigation
+
+        {/* LEFT: Question Navigation Map */}
+        <div className="border border-zinc-900 light:border-zinc-200 bg-[#070707]/80 light:bg-white/80 p-5 rounded-2xl backdrop-blur-sm h-fit space-y-5">
+          <div>
+            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Navigation</div>
+            <div className="flex items-center space-x-4 text-[10px] text-zinc-600">
+              <span className="flex items-center space-x-1">
+                <span className="h-2.5 w-2.5 rounded bg-brand-600 inline-block" />
+                <span>Current</span>
+              </span>
+              <span className="flex items-center space-x-1">
+                <span className="h-2.5 w-2.5 rounded bg-emerald-900/50 border border-emerald-800 inline-block" />
+                <span>Answered</span>
+              </span>
+              <span className="flex items-center space-x-1">
+                <span className="h-2.5 w-2.5 rounded bg-zinc-900 border border-zinc-800 inline-block" />
+                <span>Skipped</span>
+              </span>
+            </div>
           </div>
-          <p className="text-[10px] text-zinc-500">Answered: {answeredCount} / {assessment.questions.length}</p>
+
+          {/* Progress bar */}
+          <div>
+            <div className="flex justify-between text-[10px] text-zinc-500 mb-1.5">
+              <span>Progress</span>
+              <span>{Math.round((answeredCount / questions.length) * 100)}%</span>
+            </div>
+            <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-brand-600 to-brand-400 rounded-full transition-all duration-500"
+                style={{ width: `${(answeredCount / questions.length) * 100}%` }}
+              />
+            </div>
+          </div>
 
           <div className="grid grid-cols-4 gap-2">
-            {assessment.questions.map((q, index) => {
+            {questions.map((q, index) => {
               const isAnswered = selectedAnswers[q.id] !== undefined;
               const isCurrent = currentIdx === index;
               return (
                 <button
                   key={q.id}
                   onClick={() => setCurrentIdx(index)}
-                  className={`h-9 w-9 rounded-lg text-xs font-bold transition flex items-center justify-center cursor-pointer ${
+                  title={`Question ${index + 1}`}
+                  className={`h-9 w-full rounded-lg text-xs font-bold transition-all duration-150 flex items-center justify-center cursor-pointer ${
                     isCurrent
-                      ? 'bg-brand-600 text-white shadow-md'
+                      ? 'bg-brand-600 text-white shadow-md shadow-brand-500/20'
                       : isAnswered
-                      ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-900/30'
-                      : 'bg-zinc-950 light:bg-zinc-100 text-zinc-400 light:text-zinc-700 border border-zinc-900 light:border-zinc-200 hover:bg-zinc-900'
+                      ? 'bg-emerald-950/30 text-emerald-400 border border-emerald-900/40 hover:border-emerald-700'
+                      : 'bg-zinc-950 light:bg-zinc-100 text-zinc-500 border border-zinc-900 light:border-zinc-200 hover:bg-zinc-900 hover:text-zinc-300'
                   }`}
                 >
                   {index + 1}
@@ -162,43 +294,61 @@ const AssessmentAttempt = () => {
           </div>
         </div>
 
-        {/* Right Side: Active Question Panel */}
-        <div className="md:col-span-3 border border-zinc-900 light:border-zinc-200 bg-[#0a0a0a]/60 light:bg-white/60 p-6 rounded-2xl backdrop-blur-sm flex flex-col justify-between min-h-[400px]">
+        {/* RIGHT: Active Question Panel */}
+        <div className="md:col-span-3 border border-zinc-900 light:border-zinc-200 bg-[#070707]/80 light:bg-white/80 p-6 rounded-2xl backdrop-blur-sm flex flex-col justify-between min-h-[460px]">
           <div className="space-y-6">
-            
-            {/* Question title */}
-            <div className="flex items-center justify-between text-xs text-zinc-500 font-semibold uppercase">
-              <span>Question {currentIdx + 1} of {assessment.questions.length}</span>
-              <span className="flex items-center space-x-1 text-brand-400">
-                <Play size={12} />
-                <span>Single Choice</span>
+
+            {/* Question metadata */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-zinc-900 light:border-zinc-100">
+              <div className="flex items-center space-x-3">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                  Question {currentIdx + 1} / {questions.length}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold border bg-brand-950/20 border-brand-900/40 text-brand-400 uppercase">
+                  {currentQuestion.type?.replace('_', ' ')}
+                </span>
+              </div>
+              <span className="flex items-center space-x-1 text-[10px] font-bold text-purple-400 bg-purple-950/20 border border-purple-900/30 rounded-full px-2.5 py-0.5">
+                <Hash size={10} />
+                <span>{currentQuestion.points} pts</span>
               </span>
             </div>
 
-            <h4 className="text-base font-semibold text-white light:text-black leading-relaxed">
-              {currentQuestion.questionText}
+            {/* Question Text */}
+            <h4 className="text-base font-semibold text-white light:text-zinc-900 leading-relaxed">
+              {currentQuestion.text}
             </h4>
 
-            {/* MCQ Options list */}
-            <div className="space-y-3 pt-2">
-              {currentQuestion.options.map((opt) => {
+            {/* Answer Options */}
+            <div className="space-y-3 pt-1">
+              {currentQuestion.options?.map((opt) => {
                 const isSelected = selectedAnswers[currentQuestion.id] === opt.id;
+                const isSaving = savingQuestionId === currentQuestion.id && isSelected;
                 return (
                   <button
                     key={opt.id}
                     onClick={() => handleSelectOption(currentQuestion.id, opt.id)}
-                    className={`w-full flex items-center space-x-4 p-4 rounded-xl border text-sm text-left transition-all cursor-pointer ${
+                    disabled={submitAnswerMutation.isPending && savingQuestionId === currentQuestion.id}
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border text-sm text-left transition-all duration-150 cursor-pointer ${
                       isSelected
-                        ? 'bg-brand-600/10 border-brand-500 text-brand-400 font-semibold'
+                        ? 'bg-brand-600/10 border-brand-500/60 text-brand-400 font-semibold'
                         : 'bg-zinc-950/40 light:bg-zinc-50 border-zinc-900 light:border-zinc-200 text-zinc-400 light:text-zinc-700 hover:bg-zinc-900/60 light:hover:bg-zinc-100 hover:border-zinc-800'
                     }`}
                   >
-                    <div className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                      isSelected ? 'border-brand-500 bg-brand-500' : 'border-zinc-700 bg-transparent'
-                    }`}>
-                      {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white"></div>}
+                    <div className="flex items-center space-x-4">
+                      <div className={`h-4 w-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition ${
+                        isSelected ? 'border-brand-500 bg-brand-500' : 'border-zinc-700 bg-transparent'
+                      }`}>
+                        {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </div>
+                      <span className="break-words">{opt.text}</span>
                     </div>
-                    <span>{opt.optionText}</span>
+                    {isSaving && (
+                      <Loader2 size={14} className="animate-spin text-brand-400 flex-shrink-0 ml-2" />
+                    )}
+                    {isSelected && !isSaving && (
+                      <CheckCircle size={14} className="text-brand-400 flex-shrink-0 ml-2" />
+                    )}
                   </button>
                 );
               })}
@@ -207,7 +357,7 @@ const AssessmentAttempt = () => {
           </div>
 
           {/* Navigation Controls */}
-          <div className="flex items-center justify-between border-t border-[#161616] light:border-zinc-200 mt-8 pt-6">
+          <div className="flex items-center justify-between border-t border-[#151515] light:border-zinc-100 mt-8 pt-5">
             <button
               onClick={handlePrev}
               disabled={currentIdx === 0}
@@ -217,19 +367,75 @@ const AssessmentAttempt = () => {
               <span>Previous</span>
             </button>
 
+            <span className="text-[11px] text-zinc-600 font-mono">
+              {answeredCount}/{questions.length} answered
+            </span>
+
             <button
               onClick={handleNext}
-              disabled={currentIdx === assessment.questions.length - 1}
+              disabled={currentIdx === questions.length - 1}
               className="flex items-center space-x-2 px-4 py-2 border border-zinc-900 light:border-zinc-200 bg-zinc-950 light:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white hover:bg-zinc-900 transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
             >
               <span>Next</span>
               <ChevronRight size={16} />
             </button>
           </div>
-
         </div>
 
       </div>
+
+      {/* Confirm Submit Modal */}
+      {isSubmitOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative bg-zinc-950 border border-zinc-900 light:bg-white light:border-zinc-200 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-5 text-white light:text-zinc-900 animate-in zoom-in-95 duration-200">
+
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
+              <div className="flex items-center space-x-2 text-emerald-400">
+                <Send size={18} />
+                <h3 className="text-base font-bold">Submit Assessment?</h3>
+              </div>
+              <button onClick={() => setIsSubmitOpen(false)} className="text-zinc-500 hover:text-zinc-300 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-zinc-400 leading-relaxed">
+              <p>
+                You have answered <strong className="text-white">{answeredCount}</strong> out of <strong className="text-white">{questions.length}</strong> questions.
+              </p>
+              {answeredCount < questions.length && (
+                <div className="p-3 bg-amber-950/20 border border-amber-900/30 text-amber-400 rounded-xl flex items-start space-x-2">
+                  <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                  <span>You have {questions.length - answeredCount} unanswered question(s). Unanswered questions will be marked incorrect.</span>
+                </div>
+              )}
+              <p>Once submitted, you cannot change your answers. Your score will be calculated immediately.</p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                onClick={() => setIsSubmitOpen(false)}
+                className="px-4 py-2 border border-zinc-800 hover:bg-zinc-900 rounded-xl text-xs font-semibold transition cursor-pointer"
+              >
+                Continue Exam
+              </button>
+              <button
+                onClick={handleConfirmSubmit}
+                disabled={submitAttemptMutation.isPending}
+                className="flex items-center justify-center space-x-2 px-5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-500/10 transition disabled:opacity-50 cursor-pointer"
+              >
+                {submitAttemptMutation.isPending ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Send size={12} />
+                )}
+                <span>Submit Final Answers</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );
